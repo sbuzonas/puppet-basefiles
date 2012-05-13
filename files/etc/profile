@@ -1,0 +1,219 @@
+# /etc/profile: managed by puppet
+#
+# System wide environment variables and startup programs.
+#
+# System wide aliases and functions are for bashrc.
+#
+
+source /etc/bash.bashrc
+
+pathremove() {
+    local IFS=':'
+    local NEWPATH
+    local DIR
+    local PATHVARIABLE=${2:-PATH}
+    for DIR in ${!PATHVARIABLE} ; do
+        if [ "$DIR" != "$" ] ; then
+            NEWPATH=${NEWPATH:+$NEWPATH:}$DIR
+        fi
+    done
+    export $PATHVARIABLE="$NEWPATH"
+}
+
+pathprepend() {
+    pathremove $1 $2
+    local PATHVARIABLE=${2:-PATH}
+    export $PATHVARIABLE="$1${!PATHVARIABLE:+${!PATHVARIABLE}:}$1"
+}
+
+pathappend() {
+    pathremove $1 $2
+    local PATHVARIABLE=${2:-PATH}
+    export $PATHVARIABLE="${!PATHVARIABLE:+${!PATHVARIABLE}:}$1"
+}
+
+shellcolors() {
+    # Store LS_COLORS
+    LSTMP=$LS_COLORS
+
+    # Push SHELL_COLORS to LS_COLORS
+    LS_COLORS=$SHELL_COLORS
+    export LS_COLORS
+
+    # Quick little hack to have dircolors do the work for our colors.
+    TMP="$(dircolors -b ${1} | sed 's/LS/SHELL/g' | sed 's/*.//g')"
+    echo "${TMP}"
+
+    # Push LS_COLORS back in place
+    LS_COLORS=$LSTMP
+    export LS_COLORS
+}
+
+loadcolors() {
+    set -- "${SHELL_COLORS}"
+    IFS=":"; declare -a COLORS_ARRAY=($*)
+    for x in "${COLORS_ARRAY[@]}"
+    do
+        TMP_ASSIGNMENT=$(echo "${x}," | sed 's/=/="/g' | sed 's/,/"/g' )
+        eval $TMP_ASSIGNMENT
+    done
+    unset TMP_ASSIGNMENT
+}
+
+colorize() {
+    local ESC_SEQ="\033"
+    while getopts ":e" optname; do
+        case "$optname" in
+            e ) BASH_ESC=1 ;;
+            : ) echo "No value set for option ${optname}" ;;
+            ? ) echo "Unknown parameter." ;;
+        esac
+    done
+
+    local BASH_ESC_O=""
+    local BASH_ESC_C=""
+    if [[ BASH_ESC -eq 1 ]] ; then
+        BASH_ESC_O="\["
+        BASH_ESC_C="\]"
+    fi
+
+    local TMP_PARAM="${OPTIND}"
+    local TMP_COLOR="${!TMP_PARAM}"
+    let "TMP_PARAM += 1"
+    local TMP_TEXT="${!TMP_PARAM}"
+
+    if [[ -z $SHELL_COLORS ]] ; then
+        echo ${TMP_TEXT}
+        return
+    fi
+
+    loadcolors
+
+
+    local COLOR="${!TMP_COLOR}"
+
+    if [[ -z $COLOR ]] ; then
+        COLOR="0"
+    fi
+
+    local COLORED_TEXT="${BASH_ESC_O}${ESC_SEQ}[${COLOR}m${BASH_ESC_C}${TMP_TEXT}${BASH_ESC_O}${ESC_SEQ}[0m${BASH_ESC_C}"
+
+    echo $COLORED_TEXT
+    unset TMP_PARAM TMP_TEXT TMP_COLOR
+}
+
+connection_type() {
+    SSH_FLAG=0
+    SSH_IP=""
+    PROTOCOL=""
+
+    local TTY=$(tty | awk -F/dev/ '{ print $2 }')
+
+    if [[ -n ${TTY} ]] ; then
+        local SESS_SRC=$(who | grep "$TTY" | awk '{ print $6 }')
+    fi
+
+    if [[ -n ${SSH_CLIENT} ]] ; then
+        SSH_FLAG=1
+        PROTOCOL="ssh"
+        SSH_IP="$(echo ${SSH_CLIENT} | awk '{ print $1 }')"
+    elif [[ -n ${SSH_CLIENT2} ]] ; then
+        SSH_FLAG=1
+        PROTOCOL="ssh2"
+        SSH_IP="$(echo ${SSH_CLIENT2} | awk '{ print $1 }')"
+    fi
+
+    if [[ ${SSH_FLAG} -ne 1 ]]; then
+        if [[ -z ${SESS_SRC} ]] ; then
+            PROTOCOL="local"
+        elif [[ ${SESS_SRC} == "(:0.0)" ]] ; then
+            PROTOCOL="local"
+        elif [[ ${SESS_SRC} == "" ]] ; then
+            PROTOCOL="local"
+        else
+            PROTOCOL="remote"
+        fi
+    fi
+
+    if [[ ${PROTOCOL} != "local" ]] ; then
+        local CONNECTION=$(colorize -e REMOTE $PROTOCOL)
+        local OUTPUT=""
+        if [[ -n ${SSH_IP} ]] ; then
+            local IP=$(colorize -e IPADDR $SSH_IP)
+            OUTPUT="[ ${CONNECTION} - ${IP} ]"
+        else
+            OUTPUT="[ ${CONNECTION} ]"
+        fi
+        echo $OUTPUT
+    fi
+
+    export SSH_FLAG PROTOCOL SSH_IP
+}
+
+trunc_path() {
+    local TERM_WIDTH=$(tput cols)
+    local MAX_LENGTH=$((echo $COL_WIDTH/4))
+    local newPWD="${PWD/#$HOME/~}"
+    if [[ $(echo -n $newPWD | wc -c | tr -d " ") -gt $MAX_LENGTH ]] ; then
+        newPWD=$(echo -n $newPWD | awk -F "/" '{if (length($0) > 14) { if (NF>4) print $1 "/" $2 "/.../" $(NF-1) "/" $NF; else if (NF>3) print $1 "/" $2 "/.../" $NF; else print $1 "/.../" $NF; } else print $0;}')
+    fi
+    NICE_DIR=$newPWD
+    export NICE_DIR
+    if [[ -w $PWD ]] ; then
+        echo $(colorize -e DIRECTORY "[ $NICE_DIR ]")
+    else
+        echo $(colorize -e READ_ONLY "[ $NICE_DIR ]")
+    fi
+}
+
+prepare_prompt() {
+    history -a
+    FQDN="$(hostname -f)"
+
+    COLORED_USER=$(colorize -e USERNAME "${USER}")
+    COLORED_HOST=$(colorize -e HOSTNAME "@${FQDN}")
+    COLORED_CONN=$(connection_type)
+    COLORED_DIR=$(trunc_path)
+
+    PS1="${COLORED_USER}${COLORED_HOST} ${COLORED_CONN} ${COLORED_DIR} > \$ "
+    export PS1
+}
+
+config_prompt() {
+    PROMPT_COMMAND=prepare_prompt
+    prepare_prompt
+    export PS1 PROMPT_COMMAND
+}
+
+config_prompt
+
+# set initial path
+export PATH=/bin:/usr/local/bin:/usr/bin
+
+if [ $EUID -eq 0 ] ; then
+    pathappend /sbin:/usr/local/sbin:/usr/sbin
+    unset HISTFILE
+fi
+
+export HISTSIZE=1000
+export HISTIGNORE="&:[bf]g:exit"
+
+if [ -f "/etc/shellcolors" ] ; then
+    eval $(shellcolors /etc/shellcolors)
+
+    if [ -f "$HOME/.shellcolors" ] ; then
+        eval $(shellcolors $HOME/.shellcolors)
+    fi
+fi
+
+
+
+for script in /etc/profile.d/*.sh ; do
+    if [ -r $script ] ; then
+        . $script
+    fi
+done
+
+unset pathremove pathprepend pathappend
+
+# End /etc/profile
