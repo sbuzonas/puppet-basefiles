@@ -175,13 +175,31 @@ prepare_prompt() {
     COLORED_CONN=$(connection_type)
     COLORED_DIR=$(trunc_path)
 
-    PS1="${COLORED_USER}${COLORED_HOST} ${COLORED_CONN} ${COLORED_DIR} > \$ "
+    PS1="${COLORED_USER}${COLORED_HOST} ${COLORED_CONN}\n${COLORED_DIR} > \$ "
     export PS1
 }
 
+simple_prompt() {
+  export FQDN="$(hostname -f)"
+  export PS1="\u@${FQDN} > \$"
+}
+
 config_prompt() {
-    PROMPT_COMMAND=prepare_prompt
-    prepare_prompt
+    # Get PIDs
+    local parent_process=$(get_proc_name $PPID)
+    local my_process=$(get_proc_name $$)
+
+    PROMPT_COMMAND=""
+    if [[ ${parent_process} == script* ]] ; then
+        simple_prompt
+    elif [[ ${parent_process} == emacs* || ${parent_process} == xemacs* ]] ; then
+        simple_prompt
+    elif [[ ${parent_process} == NetBeans ]] ; then
+        simple_prompt
+    else
+        PROMPT_COMMAND=prepare_prompt
+        prepare_prompt
+    fi
     export PS1 PROMPT_COMMAND
 }
 
